@@ -31,6 +31,7 @@ from src.demand_forecaster import (
     forecast_ensemble, backtest, compute_quantile_forecasts,
     rolling_cv, compute_bias_factors, apply_bias_correction,
     detect_rebound_period,
+    compute_rolling_cv_and_bias,
 )
 from src.vehicle_optimizer import (
     optimize_all_routes, calculate_rental_daily_cost,
@@ -117,24 +118,24 @@ def main():
     logger.info(f"Toplam rota: {len(routes)}")
 
     # ══════════════════════════════════════════
-    # Faz 1A: [B] Rolling Cross-Validation
+    # Faz 1: [v7] Rolling CV + Bias (birleştirilmiş — tek geçiş)
     # ══════════════════════════════════════════
     rolling_cv_results = None
+    bias_factors = None
+
     if not args.skip_rolling_cv:
         logger.info("=" * 70)
-        logger.info(">>> FAZ 1A: Rolling Cross-Validation")
+        logger.info(">>> FAZ 1: Rolling CV + Bias Faktörleri (birleştirilmiş)")
         logger.info("=" * 70)
-        rolling_cv_results = rolling_cv(talep_df, routes)
-
-    # ══════════════════════════════════════════
-    # Faz 1B: [A] Bias Faktörleri Hesapla
-    # ══════════════════════════════════════════
-    bias_factors = None
-    if config.BIAS_CORRECTION_ENABLED and not args.no_bias:
-        logger.info("=" * 70)
-        logger.info(">>> FAZ 1B: Bias Faktörleri (Rolling CV tabanlı)")
-        logger.info("=" * 70)
-        bias_factors = compute_bias_factors(talep_df, routes)
+        rolling_cv_results, bias_factors = compute_rolling_cv_and_bias(
+            talep_df, routes
+        )
+    else:
+        logger.info(">>> FAZ 1: Rolling CV + Bias ATLANDI (--skip-rolling-cv)")
+        rolling_cv_results = {"avg_wmape": None, "windows": []}
+        if config.BIAS_CORRECTION_ENABLED and not args.no_bias:
+            # Rolling CV atlandıysa ama bias isteniyorsa, ayrı hesapla
+            bias_factors = compute_bias_factors(talep_df, routes)
 
     # ══════════════════════════════════════════
     # Faz 1C: Single Holdout Backtest
@@ -213,8 +214,12 @@ def main():
     logger.info(">>> FAZ 3: Spot Araç Optimizasyonu")
     logger.info("=" * 70)
 
+    # TODO (Dataset B): tm_kapasite parametresi Dataset B ile birlikte
+    # gelecek TM kapasite verisinden okunacak ve buraya geçirilecek.
+    # Yeni fonksiyon: load_tm_kapasite() → data_loader.py'e eklenecek
     planning_df, cost_summary = optimize_all_routes(
-        tahmin_df, kiralik_df, arac_maliyet_df, distances
+        tahmin_df, kiralik_df, arac_maliyet_df, distances,
+        tm_kapasite=None,  # Dataset B'de doldurulacak
     )
 
     # [C] Konsolidasyon fırsatları — maliyet entegrasyonlu

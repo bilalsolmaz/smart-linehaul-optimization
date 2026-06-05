@@ -359,6 +359,8 @@ def find_consolidation_opportunities(tahmin_df, arac_maliyet_df,
                             "varis_2":           row2["varis"],
                             "talep_2":           round(row2["tahmin_desi"], 2),
                             "toplam_talep":      round(combined, 2),
+                            "direkt_dist1_km":   round(direct_dist1, 1),
+                            "direkt_dist2_km":   round(direct_dist2, 1),
                             "direkt_mesafe_km":  round(direct_dist1 + direct_dist2, 1),
                             "konsolidasyon_km":  round(via_dist, 1),
                             "tasarruf_km":       round((direct_dist1 + direct_dist2) - via_dist, 1),
@@ -409,14 +411,14 @@ def estimate_consolidation_savings(consol_df, arac_maliyet_df):
         consol_km = row["konsolidasyon_km"]
         saved_km = row["tasarruf_km"]
 
-        # Her düşük hacimli rota için uygun araç bul
+        # Her düşük hacimli rota için uygun araç bul (— kendi mesafesiyle)
         best_separate_cost = 0
-        for t in [talep1, talep2]:
+        for t, km in [(talep1, row.get("direkt_dist1_km", direct_km / 2)),
+                      (talep2, row.get("direkt_dist2_km", direct_km / 2))]:
             best_cost = float("inf")
             for arac, info in spot_costs.items():
                 if info["kapasite"] >= t:
-                    km_share = direct_km / 2  # her rota ortalama yarı mesafe
-                    cost = info["gunluk"] + info["km"] * km_share
+                    cost = info["gunluk"] + info["km"] * km
                     if cost < best_cost:
                         best_cost = cost
             if best_cost < float("inf"):

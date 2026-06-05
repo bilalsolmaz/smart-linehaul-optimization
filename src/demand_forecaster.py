@@ -343,13 +343,23 @@ def forecast_ml(talep_df, forecast_dates, routes, tune=True):
         y_train = train_data["desi"].values
 
         if use_lgb:
-            # [E] Tuning: ilk 5 yüksek hacimli rotada parametre seçimi, diğerlerinde default
-            if tune and len(train_data) >= 30:
+            # [E] Tuning: yüksek hacimli rotalarda parametre seçimi, diğerlerinde default
+            route_total_demand = route_data["desi"].sum()
+            HIGH_VOLUME_THRESHOLD = 50_000  # toplam desi eşiği
+
+            should_tune = (
+                tune and
+                len(train_data) >= 30 and
+                route_total_demand > HIGH_VOLUME_THRESHOLD
+            )
+
+            if should_tune:
                 params = _select_best_lgb_params(X_train, y_train)
-                # verbose ve random_state zaten params içinde
                 params["verbose"] = -1
                 params["random_state"] = 42
                 model = lgb.LGBMRegressor(**params)
+                logger.debug(f"  Tuning uygulandı: {cikis}→{varis} "
+                             f"(toplam talep: {route_total_demand:,.0f})")
             else:
                 model = lgb.LGBMRegressor(
                     n_estimators=300, max_depth=5, learning_rate=0.03,
@@ -904,3 +914,141 @@ def backtest(talep_df, holdout_start, holdout_end, routes):
         "rmse": rmse, "mae": mae,
         "details_df": merged, "over_forecast_desi": over_total,
     }
+
+
+# ══════════════════════════════════════════════
+# [v7] Birleşik Rolling CV + Bias Hesaplama
+# ══════════════════════════════════════════════
+
+def compute_rolling_cv_and_bias(talep_df, routes, windows=None):
+    """
+    Rolling CV metriklerini ve bias faktörlerini TEK geçişte hesaplar.
+    Her pencere için forecast_ensemble yalnızca bir kez çağrılır.
+    Eski rolling_cv() + compute_bias_factors() ikilisinin birleşimi.
+
+    Returns:
+        cv_summary (dict): avg_wmape, avg_daily_wmape, n_windows, windows listesi
+        bias_factors (dict): {dow: correction_factor}
+    """
+    if windows is None:
+        windows = config.ROLLING_CV_WINDOWS
+
+    logger.info("=" * 50)
+    logger.info("ROLLING CV + BIAS (birleştirilmiş — tek geçiş)")
+    logger.info("=" * 50)
+
+    dow_errors = {d: [] for d in range(7)}
+    all_cv_results = []
+
+    for i, (start_str, end_str) in enumerate(windows):
+        holdout_start = pd.to_datetime(start_str)
+        holdout_end = pd.to_datetime(end_str)
+
+        train_df = talep_df[talep_df["tarih"] < holdout_start].copy()
+        test_df = talep_df[
+            (talep_df["tarih"] >= holdout_start) &
+            (talep_df["tarih"] <= holdout_end)
+        ].copy()
+        test_df = test_df[~test_df["tarih"].isin(ANOMALY_DATES)]
+
+        if len(train_df) < 50 or len(test_df) == 0:
+            logger.info(f"  Window {i+1}: Yetersiz veri, atlanıyor")
+            continue
+
+        forecast_dates = pd.date_range(holdout_start, holdout_end, freq="D")
+        logger.info(f"  Window {i+1}: {start_str} → {end_str} "
+                     f"(train={len(train_df)}, test={len(test_df)})")
+
+        # TEK ÇAĞRI — hem CV hem bias için kullanılır
+        predictions = forecast_ensemble(
+            train_df, forecast_dates, routes, tune_lgb=False
+        )
+
+        merged = predictions.merge(
+            test_df[["cikis", "varis", "tarih", "desi"]],
+            on=["cikis", "varis", "tarih"],
+            how="inner",
+        )
+        if len(merged) == 0:
+            continue
+
+        actual = merged["desi"].values
+        predicted = merged["tahmin_desi"].values
+
+        # CV metrikleri
+        wmape = (np.sum(np.abs(actual - predicted)) /
+                 np.sum(np.abs(actual))) * 100
+
+        mask = actual > 100
+        mape = (np.mean(np.abs((actual[mask] - predicted[mask]) /
+                actual[mask])) * 100) if mask.sum() > 0 else wmape
+
+        rmse = np.sqrt(np.mean((actual - predicted) ** 2))
+        mae = np.mean(np.abs(actual - predicted))
+
+        merged["dow"] = merged["tarih"].dt.dayofweek
+        daily_actual = merged.groupby("tarih")["desi"].sum()
+        daily_pred = merged.groupby("tarih")["tahmin_desi"].sum()
+        daily_wmape = (np.sum(np.abs(daily_actual - daily_pred)) /
+                       np.sum(daily_actual)) * 100
+
+        all_cv_results.append({
+            "window":      f"{start_str} → {end_str}",
+            "wmape":       wmape,
+            "mape":        mape,
+            "daily_wmape": daily_wmape,
+            "rmse":        rmse,
+            "mae":         mae,
+            "n_matched":   len(merged),
+        })
+
+        logger.info(f"    WMAPE={wmape:.2f}%, Daily={daily_wmape:.2f}%, "
+                     f"MAPE={mape:.2f}%, RMSE={rmse:,.0f}")
+
+        # Bias için DOW hataları topla
+        for dow in range(7):
+            dow_data = merged[merged["dow"] == dow]
+            act_total = dow_data["desi"].sum()
+            pred_total = dow_data["tahmin_desi"].sum()
+            if pred_total > 0:
+                dow_errors[dow].append(act_total / pred_total)
+
+    # CV özeti
+    if not all_cv_results:
+        logger.warning("Rolling CV+Bias: Hiç sonuç üretilemedi!")
+        return {"avg_wmape": None, "windows": []}, {d: 1.0 for d in range(7)}
+
+    cv_summary = {
+        "avg_wmape":       np.mean([r["wmape"]       for r in all_cv_results]),
+        "avg_mape":        np.mean([r["mape"]        for r in all_cv_results]),
+        "avg_daily_wmape": np.mean([r["daily_wmape"] for r in all_cv_results]),
+        "avg_rmse":        np.mean([r["rmse"]        for r in all_cv_results]),
+        "avg_mae":         np.mean([r["mae"]         for r in all_cv_results]),
+        "n_windows":       len(all_cv_results),
+        "windows":         all_cv_results,
+    }
+
+    logger.info(f"\n  === ROLLING CV ORTALAMA ({len(all_cv_results)} pencere) ===")
+    logger.info(f"  WMAPE: {cv_summary['avg_wmape']:.2f}%")
+    logger.info(f"  Günlük WMAPE: {cv_summary['avg_daily_wmape']:.2f}%")
+    logger.info(f"  MAPE: {cv_summary['avg_mape']:.2f}%")
+
+    # Bias faktörleri
+    damping = config.BIAS_DAMPING_FACTOR
+    bias_factors = {}
+    day_names = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"]
+
+    for dow in range(7):
+        if dow_errors[dow]:
+            raw = np.median(dow_errors[dow])
+            damped = 1.0 + (raw - 1.0) * damping
+            bias_factors[dow] = np.clip(damped, 0.85, 1.40)
+        else:
+            bias_factors[dow] = 1.0
+
+        logger.info(f"  Bias {day_names[dow]}: ×{bias_factors[dow]:.3f} "
+                     f"(CV windows: {len(dow_errors[dow])}, "
+                     f"raw: {[f'{r:.2f}' for r in dow_errors[dow]]})")
+
+    return cv_summary, bias_factors
+

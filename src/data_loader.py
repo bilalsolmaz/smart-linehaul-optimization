@@ -39,6 +39,19 @@ ARAC_COLUMN_MAP = {
     "kapasite":  "kapasite",
 }
 
+ARAC_MALIYET_COLUMN_MAP = {
+    "araç":            "arac_adi",
+    "arac":            "arac_adi",
+    "kapasite":        "kapasite",
+    "kiralık günlük":  "kiralik_gunluk",
+    "kiralik gunluk":  "kiralik_gunluk",
+    "kiralık km":      "kiralik_km",
+    "kiralik km":      "kiralik_km",
+    "spot günlük":     "spot_gunluk",
+    "spot gunluk":     "spot_gunluk",
+    "spot km":         "spot_km",
+}
+
 
 def _find_file(keyword):
     """Türkçe karakter sorununu aşarak dosya bulur."""
@@ -161,14 +174,22 @@ def load_arac_kapasite_maliyet():
                          spot_gunluk, spot_km]
     """
     df = pd.read_excel(_find_file("Kapasite"))
-    df.columns = [
-        "arac_adi",
-        "kapasite",
-        "kiralik_gunluk",
-        "kiralik_km",
-        "spot_gunluk",
-        "spot_km",
-    ]
+    # Akıllı sütun eşleme
+    actual_cols = df.columns.tolist()
+    rename_dict = {}
+    for actual in actual_cols:
+        for pattern, standard in ARAC_MALIYET_COLUMN_MAP.items():
+            if pattern.lower() in actual.lower():
+                rename_dict[actual] = standard
+                break
+    if len(set(rename_dict.values())) >= 5:
+        df = df.rename(columns=rename_dict)
+        logger.debug(f"Araç maliyet sütunları eşleştirildi: {rename_dict}")
+    else:
+        # Fallback: pozisyon bazlı (önceki davranış)
+        df.columns = ["arac_adi", "kapasite", "kiralik_gunluk",
+                      "kiralik_km", "spot_gunluk", "spot_km"]
+        logger.debug("Araç maliyet sütunları pozisyon bazlı atandı")
     return df
 
 
@@ -190,3 +211,27 @@ def load_all_data():
     logger.info(f"Kiralık araçlar: {len(data['kiralik'])} rota")
     logger.info(f"Araç tipleri: {len(data['arac_maliyet'])} tip")
     return data
+
+
+def load_tm_kapasite():
+    """
+    TM günlük kapasite limitlerini yükler (Dataset B ile gelecek).
+    Returns: dict {tm_adi: {"maks_tir": int, "maks_desi": int}} veya None
+    """
+    try:
+        filepath = _find_file("TM_Kapasite")
+        df = pd.read_excel(filepath)
+        # Sütun isimleri Dataset B ile kesinleşince güncelle
+        df.columns = ["tm_adi", "maks_tir", "maks_desi"]
+        result = {
+            row["tm_adi"]: {
+                "maks_tir":  int(row["maks_tir"]),
+                "maks_desi": int(row["maks_desi"]),
+            }
+            for _, row in df.iterrows()
+        }
+        logger.info(f"TM kapasite: {len(result)} merkez yüklendi")
+        return result
+    except FileNotFoundError:
+        logger.debug("TM kapasite dosyası bulunamadı (Dataset A'da beklenen durum)")
+        return None
