@@ -124,9 +124,10 @@ def load_koordinatlar():
     for _, row in df.iterrows():
         koord[row["merkez"]] = (row["enlem"], row["boylam"])
 
-    # Kocaeli koordinat tablosunda yok - hardcode ekle
+    # Kocaeli: v2 koordinat dosyasında mevcut, güvenlik için fallback
     if "Kocaeli" not in koord:
         koord["Kocaeli"] = config.KOCAELI_KOORDINAT
+        logger.warning("Kocaeli koordinatı dosyada bulunamadı, config'den eklendi.")
 
     return koord
 

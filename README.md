@@ -14,9 +14,7 @@ Bu proje, Hepsiburada transfer merkezleri arasındaki yük taşıma taleplerini 
 |---------------|-----------|
 | Kiralık Araç (haftalık) | 855,213 |
 | Spot Araç (haftalık) | 11,862,985 |
-| Toplam (brüt) | 12,718,198 |
-| Konsolidasyon Tasarrufu | −1,761,906 |
-| **NET MALİYET** | **10,956,292** |
+| **TOPLAM MALİYET** | **12,718,198** |
 
 ### Günlük Tahmin Profili
 
@@ -88,10 +86,11 @@ Minimize: Σ [araç_sayısı(r,t) × (spot_sabit_maliyet(t) + spot_km_maliyet(t)
 Subject to: Σ [araç_sayısı(r,t) × kapasite(t)] + kiralık_kapasite(r) ≥ tahmin_talep(r)
 ```
 
-### 3. Konsolidasyon Analizi
+### 3. Konsolidasyon Analizi (Ek Analiz — bu aşamada sürece dahil değil)
 
-Düşük hacimli rotaların birleştirme fırsatları otomatik tespit ve maliyet tasarrufu hesaplama:
-- **194 fırsat** → **60,237 km mesafe** → **1,761,906 TL tasarruf**
+Düşük hacimli rotaların birleştirme fırsatları otomatik tespit ve potansiyel maliyet tasarrufu hesaplama:
+- **194 fırsat** → **60,237 km mesafe** → **1,761,906 TL potansiyel tasarruf**
+- *Not: Yarışma kuralları gereği bu aşamada konsolidasyon değerlendirmeye dahil değildir.*
 
 ---
 

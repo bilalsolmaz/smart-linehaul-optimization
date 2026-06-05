@@ -234,11 +234,9 @@ def main():
     else:
         logger.info("Bu veri setinde konsolidasyon fırsatı bulunamadı.")
 
-    # Konsolidasyon tasarrufunu maliyet özetine ekle [C]
-    cost_summary["konsolidasyon_tasarrufu"] = consol_savings
-    cost_summary["net_toplam_maliyet"] = (
-        cost_summary["toplam_haftalik_maliyet"] - consol_savings
-    )
+    # Konsolidasyon bilgisi (yalnızca bilgilendirme — yarışma kuralı gereği
+    # bu aşamada konsolidasyon sürece dahil değildir)
+    cost_summary["konsolidasyon_tasarrufu_bilgi"] = consol_savings
 
     # ══════════════════════════════════════════
     # Faz 4: Çıktıları Kaydet
@@ -323,12 +321,10 @@ def main():
     logger.info(f"🚛 Maliyet Özeti:")
     logger.info(f"     Kiralık araç (haftalık): {cost_summary['kiralik_haftalik_maliyet']:,.0f} TL")
     logger.info(f"     Spot araç (haftalık): {cost_summary['spot_haftalik_maliyet']:,.0f} TL")
-    if consol_savings > 0:
-        logger.info(f"     Konsolidasyon tasarrufu: −{consol_savings:,.0f} TL")
     logger.info(f"     ═══════════════════════════════════════")
     logger.info(f"     TOPLAM MALİYET: {cost_summary['toplam_haftalik_maliyet']:,.0f} TL")
     if consol_savings > 0:
-        logger.info(f"     NET MALİYET (konsolidasyon dahil): {cost_summary['net_toplam_maliyet']:,.0f} TL")
+        logger.info(f"     (Bilgi: Konsolidasyon potansiyeli: −{consol_savings:,.0f} TL — bu aşamada dahil değil)")
 
     logger.info(f"🚚 Spot Araç Dağılımı (haftalık toplam):")
     for arac, adet in cost_summary["spot_arac_toplam"].items():
